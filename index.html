@@ -60,6 +60,16 @@
             transform: none;
             z-index: 50;
         }
+        /* Details/Summary Accordion Styles */
+        details > summary {
+            list-style: none; /* Hide default marker */
+        }
+        details > summary::-webkit-details-marker {
+            display: none; /* Hide default marker in Safari */
+        }
+        details[open] > summary .details-marker {
+            transform: rotate(180deg);
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans antialiased">
@@ -257,6 +267,10 @@
                      <button id="export-day-from-modal-btn" class="px-3 py-1 text-xs font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700">匯出本日報名</button>
                     <button id="close-registrations-modal" class="ml-2 text-gray-500 hover:text-gray-800 text-2xl leading-none">&times;</button>
                 </div>
+            </div>
+             <div class="flex items-center space-x-2 mb-4 p-2 bg-gray-50 rounded-md">
+                <input type="checkbox" id="sort-by-transport-checkbox" class="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                <label for="sort-by-transport-checkbox" class="text-sm font-medium text-gray-700">優先顯示需要共乘者</label>
             </div>
             <div id="registrations-list" class="max-h-[60vh] overflow-y-auto">
                 <!-- 報名者資料會動態插入這裡 -->
@@ -551,6 +565,7 @@
         const editRegistrationForm = document.getElementById('edit-registration-form');
         const cancelEditRegistrationBtn = document.getElementById('cancel-edit-registration-btn');
         const deleteRegistrationBtn = document.getElementById('delete-registration-btn');
+        const sortByTransportCheckbox = document.getElementById('sort-by-transport-checkbox');
 
 
         // --- Firebase 設定 ---
@@ -566,6 +581,7 @@
         let instructorsData = []; // 儲存講師資料
         let oooDaysData = []; // 儲存OOO資料
         let selectedDate = null; // 儲存使用者點擊的日期
+        let currentRegistrationsSnapshot = null; // 儲存當前活動的報名快照
 
         const colorPalette = ['#3b82f6', '#10b981', '#ef4444', '#f97316', '#8b5cf6', '#ec4899']; // 預設顏色
 
@@ -1041,85 +1057,119 @@
             try {
                 const q = query(registrationsCollection, where("eventId", "==", eventId));
                 unsubscribeRegistrations = onSnapshot(q, (querySnapshot) => {
-                    if (querySnapshot.empty) {
-                        registrationsListDiv.innerHTML = '<p class="text-center text-gray-500">目前尚無報名資料。</p>';
-                        return;
-                    }
-                    let notCheckedInHtml = '<div><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">未報到</h4><ul class="space-y-3">';
-                    let checkedInHtml = '<div class="mt-6"><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">已報到</h4><ul class="space-y-3">';
-                    let notCheckedInCount = 0;
-                    let checkedInCount = 0;
-                    querySnapshot.forEach(doc => {
-                        const data = doc.data();
-                        let customFieldsHtml = '';
-                        if (data.customFields && typeof data.customFields === 'object') {
-                            for (const [key, value] of Object.entries(data.customFields)) {
-                                if (key && value) {
-                                     customFieldsHtml += `<p class="text-sm text-gray-500 col-span-1 sm:col-span-2 capitalize">${key}: <span class="font-medium text-gray-700">${value}</span></p>`;
-                                }
-                            }
-                        }
-                        
-                        let sourcesHtml = '';
-                        if (data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
-                            sourcesHtml = `<div class="col-span-1 sm:col-span-2 flex flex-wrap gap-2 mt-2">
-                                ${data.sources.map(s => `<span class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-full">${s}</span>`).join('')}
-                            </div>`;
-                        }
-
-                        let guardianHtml = '';
-                        if (data.guardianName) {
-                            guardianHtml = `
-                            <div class="col-span-1 sm:col-span-2 mt-2 pt-2 border-t border-gray-200">
-                                <h5 class="text-xs font-bold text-gray-500 mb-1">法定代理人資訊</h5>
-                                <p class="text-sm text-gray-500">姓名: <span class="font-medium text-gray-700">${data.guardianName}</span></p>
-                                <p class="text-sm text-gray-500">身分證: <span class="font-medium text-gray-700">${data.guardianIdNumber || 'N/A'}</span></p>
-                                <p class="text-sm text-gray-500">地址: <span class="font-medium text-gray-700">${data.guardianAddress || 'N/A'}</span></p>
-                                <p class="text-sm text-gray-500">生日: <span class="font-medium text-gray-700">${data.guardianDob || 'N/A'}</span></p>
-                            </div>
-                            `;
-                        }
-
-                        const itemHtml = `
-                            <li class="p-4 bg-gray-50 rounded-lg border border-gray-200 relative">
-                                <button class="edit-registration-btn absolute top-2 right-2 text-xs text-blue-600 hover:underline" data-reg-id="${doc.id}">編輯</button>
-                                <div class="flex items-start space-x-4">
-                                    <input type="checkbox" data-doc-id="${doc.id}" class="check-in-box h-6 w-6 text-blue-600 border-gray-300 rounded focus:ring-blue-500 mt-1 flex-shrink-0" ${data.isCheckedIn ? 'checked' : ''}>
-                                    <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
-                                        <div class="col-span-1 sm:col-span-2 mb-1">
-                                            <p class="text-lg font-bold text-gray-800">${data.customerName || '未命名'}</p>
-                                        </div>
-                                        <p class="text-sm text-gray-500">身分證: <span class="font-medium text-gray-700">${data.customerIdNumber || 'N/A'}</span></p>
-                                        <p class="text-sm text-gray-500">生日: <span class="font-medium text-gray-700">${data.customerDob || 'N/A'}</span></p>
-                                        <p class="text-sm text-gray-500">電話: <span class="font-medium text-gray-700">${data.customerPhone || 'N/A'}</span></p>
-                                        <p class="text-sm text-gray-500">職業: <span class="font-medium text-gray-700">${data.customerOccupation || 'N/A'}</span></p>
-                                        ${data.customerEmail ? `<p class="text-sm text-gray-500 col-span-1 sm:col-span-2">Email: <span class="font-medium text-gray-700">${data.customerEmail}</span></p>` : ''}
-                                        ${customFieldsHtml}
-                                        ${guardianHtml}
-                                        ${data.addonTransport ? `<div class="col-span-1 sm:col-span-2 mt-2 pt-2 border-t border-gray-200"><p class="text-sm text-green-600 font-semibold">✓ 已加購交通接送</p></div>` : ''}
-                                        ${sourcesHtml}
-                                    </div>
-                                </div>
-                            </li>`;
-                        if (data.isCheckedIn) {
-                            checkedInCount++;
-                            checkedInHtml += itemHtml;
-                        } else {
-                            notCheckedInCount++;
-                            notCheckedInHtml += itemHtml;
-                        }
-                    });
-                    notCheckedInHtml += '</ul></div>';
-                    checkedInHtml += '</ul></div>';
-                    if (notCheckedInCount === 0) notCheckedInHtml = '<div><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">未報到</h4><p class="text-sm text-gray-500 mt-2">所有人都已報到！</p></div>';
-                    if (checkedInCount === 0) checkedInHtml = '<div class="mt-6"><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">已報到</h4><p class="text-sm text-gray-500 mt-2">尚無人報到。</p></div>';
-                    registrationsListDiv.innerHTML = notCheckedInHtml + checkedInHtml;
+                    currentRegistrationsSnapshot = querySnapshot;
+                    renderRegistrationList();
                 });
             } catch (error) {
                 console.error("讀取報名資料失敗:", error);
                 registrationsListDiv.innerHTML = '<p class="text-center text-red-500">讀取資料失敗。</p>';
             }
         }
+
+        function renderRegistrationList() {
+            if (!currentRegistrationsSnapshot) {
+                registrationsListDiv.innerHTML = '<p class="text-center text-gray-500">目前尚無報名資料。</p>';
+                return;
+            }
+            if (currentRegistrationsSnapshot.empty) {
+                registrationsListDiv.innerHTML = '<p class="text-center text-gray-500">目前尚無報名資料。</p>';
+                return;
+            }
+
+            const sortByTransport = sortByTransportCheckbox.checked;
+
+            let allDocs = currentRegistrationsSnapshot.docs.map(doc => ({ id: doc.id, data: doc.data() }));
+
+            let notCheckedInDocs = allDocs.filter(doc => !doc.data.isCheckedIn);
+            let checkedInDocs = allDocs.filter(doc => doc.data.isCheckedIn);
+
+            if (sortByTransport) {
+                const transportSorter = (a, b) => (b.data.addonTransport ? 1 : 0) - (a.data.addonTransport ? 1 : 0);
+                notCheckedInDocs.sort(transportSorter);
+                checkedInDocs.sort(transportSorter);
+            }
+
+            const buildHtmlForItem = (doc) => {
+                const data = doc.data;
+                let customFieldsHtml = '';
+                if (data.customFields && typeof data.customFields === 'object') {
+                    for (const [key, value] of Object.entries(data.customFields)) {
+                        if (key && value) {
+                             customFieldsHtml += `<p class="text-sm text-gray-500 col-span-1 sm:col-span-2 capitalize">${key}: <span class="font-medium text-gray-700">${value}</span></p>`;
+                        }
+                    }
+                }
+                
+                let sourcesHtml = '';
+                if (data.sources && Array.isArray(data.sources) && data.sources.length > 0) {
+                    sourcesHtml = `<div class="col-span-1 sm:col-span-2 flex flex-wrap gap-2 mt-2">
+                        ${data.sources.map(s => `<span class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-full">${s}</span>`).join('')}
+                    </div>`;
+                }
+
+                let guardianHtml = '';
+                if (data.guardianName) {
+                    guardianHtml = `
+                    <div class="col-span-1 sm:col-span-2 mt-2 pt-2 border-t border-gray-200">
+                        <h5 class="text-xs font-bold text-gray-500 mb-1">法定代理人資訊</h5>
+                        <p class="text-sm text-gray-500">姓名: <span class="font-medium text-gray-700">${data.guardianName}</span></p>
+                        <p class="text-sm text-gray-500">身分證: <span class="font-medium text-gray-700">${data.guardianIdNumber || 'N/A'}</span></p>
+                        <p class="text-sm text-gray-500">地址: <span class="font-medium text-gray-700">${data.guardianAddress || 'N/A'}</span></p>
+                        <p class="text-sm text-gray-500">生日: <span class="font-medium text-gray-700">${data.guardianDob || 'N/A'}</span></p>
+                    </div>
+                    `;
+                }
+                
+                const transportIconHtml = data.addonTransport ? `<span class="text-xs font-semibold bg-blue-100 text-blue-800 px-2 py-1 rounded-full ml-2">需要共乘</span>` : '';
+
+                const detailsContentHtml = `
+                    <p class="text-sm text-gray-500">身分證: <span class="font-medium text-gray-700">${data.customerIdNumber || 'N/A'}</span></p>
+                    <p class="text-sm text-gray-500">生日: <span class="font-medium text-gray-700">${data.customerDob || 'N/A'}</span></p>
+                    <p class="text-sm text-gray-500">電話: <span class="font-medium text-gray-700">${data.customerPhone || 'N/A'}</span></p>
+                    <p class="text-sm text-gray-500">職業: <span class="font-medium text-gray-700">${data.customerOccupation || 'N/A'}</span></p>
+                    ${data.customerEmail ? `<p class="text-sm text-gray-500 col-span-1 sm:col-span-2">Email: <span class="font-medium text-gray-700">${data.customerEmail}</span></p>` : ''}
+                    ${customFieldsHtml}
+                    ${guardianHtml}
+                    ${data.addonTransport ? `<div class="col-span-1 sm:col-span-2 mt-2 pt-2 border-t border-gray-200"><p class="text-sm text-blue-600 font-semibold">✓ 已加購交通接送</p></div>` : ''}
+                    ${sourcesHtml}
+                `;
+
+                return `
+                    <li>
+                        <details class="bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                            <summary class="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-100 list-none">
+                                <div class="flex items-center space-x-4">
+                                    <input type="checkbox" data-doc-id="${doc.id}" class="check-in-box h-6 w-6 text-blue-600 border-gray-300 rounded focus:ring-blue-500 flex-shrink-0" ${data.isCheckedIn ? 'checked' : ''}>
+                                    <p class="text-lg font-bold text-gray-800 flex items-center">${data.customerName || '未命名'} ${transportIconHtml}</p>
+                                </div>
+                                <div class="flex items-center space-x-3">
+                                    <button class="edit-registration-btn text-xs font-semibold bg-white border border-gray-300 rounded-md px-3 py-1 hover:bg-gray-50" data-reg-id="${doc.id}">編輯</button>
+                                    <span class="text-gray-400 text-sm transition-transform transform details-marker">▼</span>
+                                </div>
+                            </summary>
+                            <div class="p-4 border-t border-gray-200 ml-10">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                                    ${detailsContentHtml}
+                                </div>
+                            </div>
+                        </details>
+                    </li>`;
+            };
+            
+            let notCheckedInHtml = '<div><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">未報到</h4><ul class="space-y-2">';
+            notCheckedInDocs.forEach(doc => notCheckedInHtml += buildHtmlForItem(doc));
+            notCheckedInHtml += '</ul></div>';
+
+            let checkedInHtml = '<div class="mt-6"><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">已報到</h4><ul class="space-y-2">';
+            checkedInDocs.forEach(doc => checkedInHtml += buildHtmlForItem(doc));
+            checkedInHtml += '</ul></div>';
+
+            if (notCheckedInDocs.length === 0) notCheckedInHtml = '<div><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">未報到</h4><p class="text-sm text-gray-500 mt-2">所有人都已報到！</p></div>';
+            if (checkedInDocs.length === 0) checkedInHtml = '<div class="mt-6"><h4 class="text-md font-semibold text-gray-700 mb-2 border-b pb-2">已報到</h4><p class="text-sm text-gray-500 mt-2">尚無人報到。</p></div>';
+
+            registrationsListDiv.innerHTML = notCheckedInHtml + checkedInHtml;
+        }
+
 
         function showOooDetails(oooId) {
             const oooEntry = oooDaysData.find(o => o.id === oooId);
@@ -1936,14 +1986,36 @@
             editRegistrationForm.addEventListener('submit', handleEditRegistrationForm);
             deleteRegistrationBtn.addEventListener('click', async () => {
                 const regId = editRegistrationForm.querySelector('#edit-registration-id').value;
-                if(regId && confirm('您確定要取消這筆報名嗎？此動作無法復原。')) {
+                if (!regId) return;
+
+                const btn = deleteRegistrationBtn;
+                if (btn.dataset.confirm === 'true') {
                     try {
                         await deleteDoc(doc(registrationsCollection, regId));
                         editRegistrationModal.classList.add('hidden');
                     } catch (error) {
                         console.error("取消報名失敗:", error);
-                        alert("取消報名失敗！");
+                    } finally {
+                        if (btn.timeoutId) clearTimeout(btn.timeoutId);
+                        btn.textContent = '取消此筆報名';
+                        btn.classList.replace('bg-yellow-500', 'bg-red-600');
+                        btn.classList.replace('text-black', 'text-white');
+                        delete btn.dataset.confirm;
                     }
+                } else {
+                    btn.dataset.confirm = 'true';
+                    btn.textContent = '確認取消？';
+                    btn.classList.replace('bg-red-600', 'bg-yellow-500');
+                    btn.classList.replace('text-white', 'text-black');
+
+                    btn.timeoutId = setTimeout(() => {
+                        if (btn.dataset.confirm === 'true') {
+                           btn.textContent = '取消此筆報名';
+                           btn.classList.replace('bg-yellow-500', 'bg-red-600');
+                           btn.classList.replace('text-black', 'text-white');
+                           delete btn.dataset.confirm;
+                        }
+                    }, 3000);
                 }
             });
 
@@ -2094,6 +2166,9 @@
                     }
                 }
             });
+            
+            sortByTransportCheckbox.addEventListener('change', renderRegistrationList);
+
         }
     </script>
 </body>
